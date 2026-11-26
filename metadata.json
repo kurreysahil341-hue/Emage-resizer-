@@ -1,0 +1,6 @@
+{
+  "name": "ParikshaSnap — RRB & Vyapam Image Resizer",
+  "description": "Client-side HTML5 Canvas image resizer and KB compressor for RRB, MPESB Vyapam, and custom exam application forms.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

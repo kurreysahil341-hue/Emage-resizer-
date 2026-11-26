@@ -1,0 +1,11 @@
+{
+  "appId": "com.parikshasnap.resizer",
+  "appName": "ParikshaSnap",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "captureInput": true
+  }
+}
