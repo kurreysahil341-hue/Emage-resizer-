@@ -41,7 +41,11 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          accept-sdk-licenses: true
+          accept-android-sdk-licenses: true
+          packages: 'cmdline-tools;latest platform-tools platforms;android-34 platforms;android-36 build-tools;34.0.0 build-tools;35.0.0'
+
+      - name: Accept any remaining Android SDK licenses
+        run: yes | sdkmanager --licenses > /dev/null || true
 
       - name: Cache Gradle packages
         uses: actions/cache@v4
