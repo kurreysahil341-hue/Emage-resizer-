@@ -421,6 +421,11 @@ export const COPY: Record<Language, {
   architectureTitle: string;
   architectureSteps: { title: string; desc: string }[];
   creatorCredit: string;
+  privacyBtn: string;
+  privacyTitle: string;
+  privacyPoints: string[];
+  openCropBtn: string;
+  resetCropBtn: string;
 }> = {
   hi: {
     brand: 'ParikshaSnap',
@@ -511,6 +516,16 @@ export const COPY: Record<Language, {
       },
     ],
     creatorCredit: 'निर्माता: Sahil Kurrey',
+    privacyBtn: 'गोपनीयता नीति (Privacy Policy)',
+    privacyTitle: 'गोपनीयता नीति — ParikshaSnap',
+    privacyPoints: [
+      'आपकी सभी फ़ोटो, हस्ताक्षर और दस्तावेज़ 100% ऑफ़लाइन केवल आपके डिवाइस पर प्रोसेस होते हैं।',
+      'कोई भी इमेज या व्यक्तिगत जानकारी किसी भी बाहरी सर्वर या क्लाउड पर नहीं भेजी जाती।',
+      'इस ऐप में कोई विज्ञापन, ट्रैकिंग SDK या अकाउंट लॉगिन नहीं है।',
+      'संपर्क ईमेल: sahilkurrey441@gmail.com',
+    ],
+    openCropBtn: 'एडवांस क्रॉप / सीधा करें',
+    resetCropBtn: 'क्रॉप हटाएँ',
   },
   en: {
     brand: 'ParikshaSnap',
@@ -601,5 +616,15 @@ export const COPY: Record<Language, {
       },
     ],
     creatorCredit: 'Created by Sahil Kurrey',
+    privacyBtn: 'Privacy Policy',
+    privacyTitle: 'Privacy Policy — ParikshaSnap',
+    privacyPoints: [
+      'All photos, signatures, and documents are processed 100% locally offline on your device.',
+      'No image or personal data is ever uploaded, stored, or shared with any external server.',
+      'This app contains zero ads, zero tracking SDKs, and requires no login.',
+      'Developer Contact: sahilkurrey441@gmail.com',
+    ],
+    openCropBtn: 'Advanced Crop & Straighten',
+    resetCropBtn: 'Reset Crop',
   },
 };

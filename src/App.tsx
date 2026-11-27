@@ -6,18 +6,22 @@ import { Media } from '@capacitor-community/media';
 import {
   AlertTriangle,
   CheckCircle2,
+  Crop,
   Download,
   ImagePlus,
   Lock,
   RotateCcw,
   RotateCw,
   Share2,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Type,
   Unlock,
   Upload,
+  X,
 } from 'lucide-react';
+import AdvancedCropModal from './components/AdvancedCropModal';
 import { COPY, EXAM_PRESETS } from './data/presets';
 import {
   ExamCategory,
@@ -76,7 +80,10 @@ export default function App() {
   });
 
   const [sourceInfo, setSourceInfo] = useState<SourceImageInfo | null>(null);
+  const [rawSourceImgEl, setRawSourceImgEl] = useState<HTMLImageElement | null>(null);
   const [sourceImgEl, setSourceImgEl] = useState<HTMLImageElement | null>(null);
+  const [isCropped, setIsCropped] = useState(false);
+  const [showCropModal, setShowCropModal] = useState(false);
   const [output, setOutput] = useState<ProcessedOutput | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -84,6 +91,7 @@ export default function App() {
   const [previewTab, setPreviewTab] = useState<'processed' | 'compare' | 'original'>('processed');
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [savedItems, setSavedItems] = useState<SavedFileRecord[]>([]);
+  const [showPrivacy, setShowPrivacy] = useState(false);
 
   const [kbDraft, setKbDraft] = useState<string>(String(INITIAL_PRESET.defaultMaxKB));
   const [widthDraft, setWidthDraft] = useState<string>(String(INITIAL_PRESET.width));
@@ -174,7 +182,9 @@ export default function App() {
           mimeType: file.type,
           objectUrl,
         });
+        setRawSourceImgEl(workingImg);
         setSourceImgEl(workingImg);
+        setIsCropped(false);
         setPreviewTab('processed');
         setSettings((prev) => ({
           ...prev,
@@ -240,6 +250,33 @@ export default function App() {
     } catch {
       setErrorMsg('Could not generate local sample image.');
     }
+  };
+
+  const handleApplyAdvancedCrop = (croppedImg: HTMLImageElement) => {
+    setSourceImgEl(croppedImg);
+    setIsCropped(true);
+    setShowCropModal(false);
+    setPreviewTab('processed');
+    setSettings((prev) => ({
+      ...prev,
+      rotation: 0,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+    }));
+  };
+
+  const handleResetCrop = () => {
+    if (!rawSourceImgEl) return;
+    setSourceImgEl(rawSourceImgEl);
+    setIsCropped(false);
+    setSettings((prev) => ({
+      ...prev,
+      rotation: 0,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+    }));
   };
 
   const selectPreset = (presetId: string) => {
@@ -1127,6 +1164,28 @@ export default function App() {
                   </button>
                 </div>
 
+                {/* Advanced Interactive Crop Launcher */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={!rawSourceImgEl}
+                    onClick={() => setShowCropModal(true)}
+                    className="flex-1 min-h-[42px] px-3 py-2 text-xs font-medium text-blue-700 bg-blue-50/80 border border-blue-200 hover:bg-blue-100/70 disabled:opacity-45 disabled:cursor-not-allowed rounded-lg inline-flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                  >
+                    <Crop className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>{t.openCropBtn}</span>
+                  </button>
+                  {isCropped && (
+                    <button
+                      type="button"
+                      onClick={handleResetCrop}
+                      className="min-h-[42px] px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg cursor-pointer whitespace-nowrap"
+                    >
+                      {t.resetCropBtn}
+                    </button>
+                  )}
+                </div>
+
                 {/* Rotation + Zoom */}
                 <div className="flex items-center gap-2">
                   <button
@@ -1282,12 +1341,24 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="text-xs text-slate-500 font-mono tabular-nums flex items-center gap-2">
-                  <span>
-                    {settings.width} × {settings.height} px
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>{settings.format.split('/')[1].toUpperCase()}</span>
+                <div className="flex items-center gap-3">
+                  {rawSourceImgEl && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCropModal(true)}
+                      className="min-h-[34px] px-2.5 py-1 rounded-md bg-blue-50 border border-blue-200 hover:bg-blue-100/80 text-blue-700 text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                    >
+                      <Crop className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>{lang === 'hi' ? 'क्रॉप करें' : 'Crop'}</span>
+                    </button>
+                  )}
+                  <div className="text-xs text-slate-500 font-mono tabular-nums flex items-center gap-2">
+                    <span>
+                      {settings.width} × {settings.height} px
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>{settings.format.split('/')[1].toUpperCase()}</span>
+                  </div>
                 </div>
               </div>
 
@@ -1701,12 +1772,67 @@ export default function App() {
         </section>
         {/* In-App Footer */}
         <footer className="max-w-7xl mx-auto px-4 sm:px-6 pt-10">
-          <div className="border-t border-slate-200 pt-5 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-            <span className="font-medium text-slate-700">{t.brand}</span>
+          <div className="border-t border-slate-200 pt-5 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="font-medium text-slate-700">{t.brand}</span>
+              <span aria-hidden="true">·</span>
+              <button
+                type="button"
+                onClick={() => setShowPrivacy(true)}
+                className="inline-flex items-center gap-1 text-blue-700 hover:underline font-medium cursor-pointer"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>{t.privacyBtn}</span>
+              </button>
+            </div>
             <span className="font-medium text-slate-700">{t.creatorCredit}</span>
           </div>
         </footer>
       </main>
+
+      {showPrivacy && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="privacy-modal-title"
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setShowPrivacy(false)}
+        >
+          <div
+            className="w-full max-w-md bg-white border border-slate-200 rounded-xl p-5 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h2 id="privacy-modal-title" className="font-display text-base font-semibold text-slate-900">
+                {t.privacyTitle}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowPrivacy(false)}
+                aria-label="Close"
+                className="min-h-[36px] min-w-[36px] rounded-lg border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50 cursor-pointer"
+              >
+                <X className="w-4 h-4" aria-hidden="true" />
+              </button>
+            </div>
+            <ul className="space-y-2 text-xs text-slate-600 leading-relaxed list-disc pl-4">
+              {t.privacyPoints.map((pt) => (
+                <li key={pt}>{pt}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
+      <AdvancedCropModal
+        isOpen={showCropModal}
+        sourceImg={rawSourceImgEl}
+        presetWidth={settings.width}
+        presetHeight={settings.height}
+        lang={lang}
+        onCancel={() => setShowCropModal(false)}
+        onApply={handleApplyAdvancedCrop}
+      />
 
       {/* Mobile Sticky Bottom Download CTA (only shown when output is ready) */}
       {sourceInfo && output && (
