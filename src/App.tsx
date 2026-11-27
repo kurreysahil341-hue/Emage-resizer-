@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Capacitor } from '@capacitor/core';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
+import { Media } from '@capacitor-community/media';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -38,6 +39,18 @@ import {
 
 const INITIAL_PRESET = EXAM_PRESETS[0];
 
+interface SavedFileRecord {
+  id: string;
+  filename: string;
+  locationLabel: string;
+  sizeBytes: number;
+  width: number;
+  height: number;
+  format: OutputFormat;
+  previewUrl: string | null;
+  blob: Blob;
+}
+
 export default function App() {
   const [lang, setLang] = useState<Language>('hi');
   const t = COPY[lang];
@@ -70,6 +83,7 @@ export default function App() {
   const [saveBanner, setSaveBanner] = useState<string | null>(null);
   const [previewTab, setPreviewTab] = useState<'processed' | 'compare' | 'original'>('processed');
   const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [savedItems, setSavedItems] = useState<SavedFileRecord[]>([]);
 
   const [kbDraft, setKbDraft] = useState<string>(String(INITIAL_PRESET.defaultMaxKB));
   const [widthDraft, setWidthDraft] = useState<string>(String(INITIAL_PRESET.width));
@@ -116,15 +130,19 @@ export default function App() {
   const prevSourceUrlRef = useRef<string | null>(null);
   const prevOutputUrlRef = useRef<string | null>(null);
   const prevPreviewUrlRef = useRef<string | null>(null);
+  const savedPreviewUrlsRef = useRef<Set<string>>(new Set());
   const latestJobIdRef = useRef<number>(0);
 
   useEffect(() => {
+    const savedUrls = savedPreviewUrlsRef.current;
     return () => {
       if (prevSourceUrlRef.current) URL.revokeObjectURL(prevSourceUrlRef.current);
       if (prevOutputUrlRef.current) URL.revokeObjectURL(prevOutputUrlRef.current);
       if (prevPreviewUrlRef.current && prevPreviewUrlRef.current !== prevOutputUrlRef.current) {
         URL.revokeObjectURL(prevPreviewUrlRef.current);
       }
+      savedUrls.forEach((url) => URL.revokeObjectURL(url));
+      savedUrls.clear();
     };
   }, []);
 
@@ -328,120 +346,117 @@ export default function App() {
     };
   }, [sourceImgEl, settings]);
 
-  const blobToBase64 = (blob: Blob): Promise<string> =>
+  const blobToDataUrl = (blob: Blob): Promise<string> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = String(reader.result || '');
-        resolve(result.includes(',') ? result.split(',')[1] : result);
-      };
-      reader.onerror = () => reject(new Error('Failed to encode file as base64'));
+      reader.onloadend = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Failed to encode file'));
       reader.readAsDataURL(blob);
     });
 
-  const getOutputFilename = (withUniqueSuffix = false) => {
-    if (!output) return 'parikshasnap-output.jpg';
-    const ext = getExtensionFromFormat(output.format);
-    const baseName = activePreset.id === 'custom-free' ? 'resized-image' : activePreset.id;
-    const suffix = withUniqueSuffix ? `-${Date.now().toString().slice(-5)}` : '';
-    return `${baseName}-${output.width}x${output.height}${suffix}.${ext}`;
+  const blobToBase64 = async (blob: Blob): Promise<string> => {
+    const dataUrl = await blobToDataUrl(blob);
+    return dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
   };
 
-  const handleDownload = async () => {
-    if (!output) return;
-    setErrorMsg(null);
-    setSaveBanner(null);
+  const buildOutputFileParts = (targetOutput: ProcessedOutput) => {
+    const ext = getExtensionFromFormat(targetOutput.format);
+    const presetTag = activePreset.id === 'custom-free' ? 'custom' : activePreset.id;
+    const kbTag = `${Math.max(1, Math.round(targetOutput.sizeBytes / 1024))}KB`;
+    const dimTag = `${targetOutput.width}x${targetOutput.height}`;
+    const stamp = Date.now().toString().slice(-4);
+    const baseWithoutExt = `ParikshaSnap_${presetTag}_${kbTag}_${dimTag}_${stamp}`;
+    return {
+      baseWithoutExt,
+      fullFilename: `${baseWithoutExt}.${ext}`,
+    };
+  };
 
-    if (Capacitor.isNativePlatform()) {
-      const uniqueFilename = getOutputFilename(true);
-      try {
-        const base64Data = await blobToBase64(output.blob);
+  const recordSavedItem = (
+    targetOutput: ProcessedOutput,
+    filename: string,
+    locationLabel: string
+  ) => {
+    const previewUrl =
+      targetOutput.format === 'application/pdf'
+        ? null
+        : URL.createObjectURL(targetOutput.blob);
+    if (previewUrl) {
+      savedPreviewUrlsRef.current.add(previewUrl);
+    }
 
-        try {
-          await Filesystem.requestPermissions();
-        } catch {
-          // Android 13+ may not need legacy storage prompt
-        }
+    const newItem: SavedFileRecord = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      filename,
+      locationLabel,
+      sizeBytes: targetOutput.sizeBytes,
+      width: targetOutput.width,
+      height: targetOutput.height,
+      format: targetOutput.format,
+      previewUrl,
+      blob: targetOutput.blob,
+    };
 
-        try {
-          await Filesystem.writeFile({
-            path: `ParikshaSnap/${uniqueFilename}`,
-            data: base64Data,
-            directory: Directory.Documents,
-            recursive: true,
-          });
-          setSaveBanner(`${t.savedNotice} Documents/ParikshaSnap/${uniqueFilename}`);
-          return;
-        } catch {
-          try {
-            await Filesystem.writeFile({
-              path: `ParikshaSnap/${uniqueFilename}`,
-              data: base64Data,
-              directory: Directory.External,
-              recursive: true,
-            });
-            setSaveBanner(`${t.savedNotice} Android/data/.../ParikshaSnap/${uniqueFilename}`);
-            return;
-          } catch {
-            const cached = await Filesystem.writeFile({
-              path: uniqueFilename,
-              data: base64Data,
-              directory: Directory.Cache,
-            });
-            await Share.share({
-              title: uniqueFilename,
-              files: [cached.uri],
-              dialogTitle: uniqueFilename,
-            });
-            setSaveBanner(`${t.savedNotice} ${uniqueFilename}`);
-            return;
+    setSavedItems((prev) => {
+      const next = [newItem, ...prev];
+      if (next.length > 6) {
+        const evicted = next.slice(6);
+        evicted.forEach((old) => {
+          if (old.previewUrl) {
+            URL.revokeObjectURL(old.previewUrl);
+            savedPreviewUrlsRef.current.delete(old.previewUrl);
           }
-        }
-      } catch (err) {
-        if ((err as Error)?.name === 'AbortError') return;
-        setErrorMsg(err instanceof Error ? err.message : 'Failed to save file on device');
-        return;
+        });
+        return next.slice(0, 6);
       }
-    }
-
-    const filename = getOutputFilename(false);
-    const isGenericAndroidWebView = /Android/i.test(navigator.userAgent) && /; wv\)/i.test(navigator.userAgent);
-
-    if (isGenericAndroidWebView) {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error('Failed to prepare file'));
-        reader.readAsDataURL(output.blob);
-      });
-      const link = document.createElement('a');
-      link.href = dataUrl;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setSaveBanner(`${t.savedNotice} ${filename}`);
-      return;
-    }
-
-    const link = document.createElement('a');
-    link.href = output.objectUrl;
-    link.download = filename;
-    link.rel = 'noopener';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setSaveBanner(`${t.savedNotice} ${filename}`);
+      return next;
+    });
   };
 
-  const handleShare = async () => {
-    if (!output) return;
+  const saveImageToGalleryAlbum = async (
+    blob: Blob,
+    fileNameNoExt: string
+  ): Promise<string | undefined> => {
+    const albumName = 'ParikshaSnap';
+    const { path: albumsPath } = await Media.getAlbumsPath();
+    let { albums } = await Media.getAlbums();
+
+    let targetAlbum =
+      albums.find((a) => a.name === albumName && a.identifier.startsWith(albumsPath)) ||
+      albums.find((a) => a.name === albumName);
+
+    if (!targetAlbum) {
+      try {
+        await Media.createAlbum({ name: albumName });
+      } catch {
+        // Album folder may already exist on storage
+      }
+      const refreshed = await Media.getAlbums();
+      albums = refreshed.albums;
+      targetAlbum =
+        albums.find((a) => a.name === albumName && a.identifier.startsWith(albumsPath)) ||
+        albums.find((a) => a.name === albumName);
+    }
+
+    if (!targetAlbum) {
+      throw new Error('Could not find or create ParikshaSnap album');
+    }
+
+    const dataUrl = await blobToDataUrl(blob);
+    const saved = await Media.savePhoto({
+      path: dataUrl,
+      albumIdentifier: targetAlbum.identifier,
+      fileName: fileNameNoExt,
+    });
+    return saved.filePath;
+  };
+
+  const shareBlobFile = async (blob: Blob, filename: string, format: OutputFormat) => {
     setErrorMsg(null);
-    const filename = getOutputFilename(true);
 
     if (Capacitor.isNativePlatform()) {
       try {
-        const base64Data = await blobToBase64(output.blob);
+        const base64Data = await blobToBase64(blob);
         const cached = await Filesystem.writeFile({
           path: filename,
           data: base64Data,
@@ -452,27 +467,134 @@ export default function App() {
           files: [cached.uri],
           dialogTitle: filename,
         });
-        return;
+        return true;
       } catch (err) {
-        if ((err as Error)?.name === 'AbortError') return;
+        if ((err as Error)?.name === 'AbortError') return true;
         setErrorMsg(err instanceof Error ? err.message : 'Unable to share file');
-        return;
+        return false;
       }
     }
 
-    const file = new File([output.blob], filename, { type: output.format });
+    const file = new File([blob], filename, { type: format });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
         await navigator.share({
           title: filename,
           files: [file],
         });
-        return;
+        return true;
       } catch (err) {
-        if ((err as Error)?.name === 'AbortError') return;
+        if ((err as Error)?.name === 'AbortError') return true;
       }
     }
-    await handleDownload();
+    return false;
+  };
+
+  const handleDownload = async () => {
+    if (!output) return;
+    setErrorMsg(null);
+    setSaveBanner(null);
+
+    const { baseWithoutExt, fullFilename } = buildOutputFileParts(output);
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        if (output.format !== 'application/pdf') {
+          try {
+            await saveImageToGalleryAlbum(output.blob, baseWithoutExt);
+            setSaveBanner(`${t.savedGalleryNotice} ${fullFilename}`);
+            recordSavedItem(output, fullFilename, t.locationGallery);
+            return;
+          } catch {
+            // Fall through to Documents / External / Share fallback
+          }
+        }
+
+        const base64Data = await blobToBase64(output.blob);
+        try {
+          await Filesystem.requestPermissions();
+        } catch {
+          // Android 13+ scopes app Documents access without legacy prompt
+        }
+
+        try {
+          await Filesystem.writeFile({
+            path: `ParikshaSnap/${fullFilename}`,
+            data: base64Data,
+            directory: Directory.Documents,
+            recursive: true,
+          });
+          setSaveBanner(`${t.savedNotice} Documents/ParikshaSnap/${fullFilename}`);
+          recordSavedItem(output, fullFilename, t.locationDocs);
+          return;
+        } catch {
+          try {
+            await Filesystem.writeFile({
+              path: `ParikshaSnap/${fullFilename}`,
+              data: base64Data,
+              directory: Directory.External,
+              recursive: true,
+            });
+            setSaveBanner(`${t.savedNotice} ParikshaSnap/${fullFilename}`);
+            recordSavedItem(output, fullFilename, 'ParikshaSnap');
+            return;
+          } catch {
+            const cached = await Filesystem.writeFile({
+              path: fullFilename,
+              data: base64Data,
+              directory: Directory.Cache,
+            });
+            await Share.share({
+              title: fullFilename,
+              files: [cached.uri],
+              dialogTitle: fullFilename,
+            });
+            setSaveBanner(`${t.savedNotice} ${fullFilename}`);
+            recordSavedItem(output, fullFilename, t.locationDocs);
+            return;
+          }
+        }
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') return;
+        setErrorMsg(err instanceof Error ? err.message : 'Failed to save file on device');
+        return;
+      }
+    }
+
+    const isGenericAndroidWebView =
+      /Android/i.test(navigator.userAgent) && /; wv\)/i.test(navigator.userAgent);
+
+    if (isGenericAndroidWebView) {
+      const dataUrl = await blobToDataUrl(output.blob);
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = fullFilename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setSaveBanner(`${t.savedNotice} ${fullFilename}`);
+      recordSavedItem(output, fullFilename, t.locationDownloads);
+      return;
+    }
+
+    const link = document.createElement('a');
+    link.href = output.objectUrl;
+    link.download = fullFilename;
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setSaveBanner(`${t.savedNotice} ${fullFilename}`);
+    recordSavedItem(output, fullFilename, t.locationDownloads);
+  };
+
+  const handleShare = async () => {
+    if (!output) return;
+    const { fullFilename } = buildOutputFileParts(output);
+    const shared = await shareBlobFile(output.blob, fullFilename, output.format);
+    if (!shared && !Capacitor.isNativePlatform()) {
+      await handleDownload();
+    }
   };
 
   const handlePreviewPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -579,7 +701,7 @@ export default function App() {
           <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
             <div className="max-w-2xl">
               <p className="text-xs font-medium text-blue-700 mb-2">
-                {t.offlineBadge}
+                {t.offlineBadge} · <span className="text-slate-700">{t.creatorCredit}</span>
               </p>
               <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 text-balance">
                 {t.heroTitle}
@@ -660,6 +782,9 @@ export default function App() {
                     [
                       { id: 'rrb', label: t.categoryRrb },
                       { id: 'vyapam', label: t.categoryVyapam },
+                      { id: 'ssc', label: t.categorySsc },
+                      { id: 'upsc', label: t.categoryUpsc },
+                      { id: 'banking', label: t.categoryBanking },
                       { id: 'custom', label: t.categoryCustom },
                     ] as const
                   ).map((cat) => (
@@ -667,7 +792,7 @@ export default function App() {
                       key={cat.id}
                       type="button"
                       onClick={() => handleCategorySwitch(cat.id)}
-                      className={`min-h-[40px] px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap truncate cursor-pointer ${
+                      className={`min-h-[40px] px-2 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap truncate cursor-pointer ${
                         activeCategory === cat.id
                           ? 'bg-white text-blue-700 shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
@@ -1414,9 +1539,9 @@ export default function App() {
                     </div>
 
                     {saveBanner && (
-                      <div className="px-3.5 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 shrink-0" aria-hidden="true" />
-                        <span className="truncate">{saveBanner}</span>
+                      <div className="px-3.5 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium flex items-start gap-2">
+                        <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                        <span className="break-all">{saveBanner}</span>
                       </div>
                     )}
                   </>
@@ -1435,6 +1560,57 @@ export default function App() {
                       <Upload className="w-3.5 h-3.5" aria-hidden="true" />
                       <span>{t.uploadBtn}</span>
                     </button>
+                  </div>
+                )}
+
+                {savedItems.length > 0 && (
+                  <div className="pt-3 border-t border-slate-200">
+                    <h3 className="font-display text-xs font-semibold text-slate-900 mb-2.5">
+                      {t.savedHistoryHeading}
+                    </h3>
+                    <ul className="divide-y divide-slate-200 border border-slate-200 rounded-lg bg-slate-50/50">
+                      {savedItems.map((item) => (
+                        <li
+                          key={item.id}
+                          className="px-3 py-2.5 flex items-center justify-between gap-3"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            {item.previewUrl ? (
+                              <img
+                                src={item.previewUrl}
+                                alt={item.filename}
+                                className="w-10 h-10 object-cover bg-white shrink-0 block"
+                              />
+                            ) : (
+                              <div className="w-10 h-10 bg-slate-200 text-slate-700 font-mono text-[10px] font-semibold flex items-center justify-center shrink-0">
+                                PDF
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="text-xs font-mono font-medium text-slate-900 truncate">
+                                {item.filename}
+                              </p>
+                              <p className="mt-0.5 text-[11px] text-slate-600 font-mono tabular-nums truncate">
+                                {item.width}×{item.height} px · {formatBytes(item.sizeBytes)} ·{' '}
+                                <span className="font-sans text-emerald-700 font-medium">
+                                  {item.locationLabel}
+                                </span>
+                              </p>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => shareBlobFile(item.blob, item.filename, item.format)}
+                            aria-label={`${t.shareBtn} ${item.filename}`}
+                            className="min-h-[36px] px-3 py-1.5 rounded-md bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-medium inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+                          >
+                            <Share2 className="w-3.5 h-3.5" aria-hidden="true" />
+                            <span className="hidden sm:inline">{t.shareBtn}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 )}
               </div>
@@ -1473,6 +1649,9 @@ export default function App() {
                     <td className="py-3 px-4">
                       <div className="font-medium text-slate-900">
                         {lang === 'hi' ? preset.labelHi : preset.labelEn}
+                      </div>
+                      <div className="text-xs text-blue-700 mt-0.5">
+                        {lang === 'hi' ? preset.examsHi : preset.examsEn}
                       </div>
                       <div className="text-xs text-slate-500 mt-0.5">
                         {lang === 'hi' ? preset.noteHi : preset.noteEn}
@@ -1513,6 +1692,13 @@ export default function App() {
             ))}
           </div>
         </section>
+        {/* In-App Footer */}
+        <footer className="max-w-7xl mx-auto px-4 sm:px-6 pt-10">
+          <div className="border-t border-slate-200 pt-5 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+            <span className="font-medium text-slate-700">{t.brand}</span>
+            <span className="font-medium text-slate-700">{t.creatorCredit}</span>
+          </div>
+        </footer>
       </main>
 
       {/* Mobile Sticky Bottom Download CTA (only shown when output is ready) */}

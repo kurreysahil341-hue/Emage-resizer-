@@ -1,6 +1,6 @@
 export type Language = 'hi' | 'en';
 
-export type ExamCategory = 'rrb' | 'vyapam' | 'custom';
+export type ExamCategory = 'rrb' | 'vyapam' | 'ssc' | 'upsc' | 'banking' | 'custom';
 
 export type FitMode = 'cover' | 'contain' | 'stretch';
 
@@ -12,6 +12,8 @@ export interface ExamPreset {
   kind: 'photo' | 'signature' | 'document' | 'template';
   labelHi: string;
   labelEn: string;
+  examsHi: string;
+  examsEn: string;
   width: number;
   height: number;
   minKB: number;
