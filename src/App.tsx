@@ -339,51 +339,95 @@ export default function App() {
       reader.readAsDataURL(blob);
     });
 
-  const getOutputFilename = () => {
+  const getOutputFilename = (withUniqueSuffix = false) => {
     if (!output) return 'parikshasnap-output.jpg';
     const ext = getExtensionFromFormat(output.format);
     const baseName = activePreset.id === 'custom-free' ? 'resized-image' : activePreset.id;
-    return `${baseName}-${output.width}x${output.height}.${ext}`;
+    const suffix = withUniqueSuffix ? `-${Date.now().toString().slice(-5)}` : '';
+    return `${baseName}-${output.width}x${output.height}${suffix}.${ext}`;
   };
 
   const handleDownload = async () => {
     if (!output) return;
-    const filename = getOutputFilename();
+    setErrorMsg(null);
     setSaveBanner(null);
 
     if (Capacitor.isNativePlatform()) {
+      const uniqueFilename = getOutputFilename(true);
       try {
         const base64Data = await blobToBase64(output.blob);
+
+        try {
+          await Filesystem.requestPermissions();
+        } catch {
+          // Android 13+ may not need legacy storage prompt
+        }
+
         try {
           await Filesystem.writeFile({
-            path: `ParikshaSnap/${filename}`,
+            path: `ParikshaSnap/${uniqueFilename}`,
             data: base64Data,
             directory: Directory.Documents,
             recursive: true,
           });
-          setSaveBanner(`${t.savedNotice} Documents/ParikshaSnap/${filename}`);
+          setSaveBanner(`${t.savedNotice} Documents/ParikshaSnap/${uniqueFilename}`);
           return;
         } catch {
-          const cached = await Filesystem.writeFile({
-            path: filename,
-            data: base64Data,
-            directory: Directory.Cache,
-          });
-          await Share.share({
-            title: filename,
-            url: cached.uri,
-          });
-          return;
+          try {
+            await Filesystem.writeFile({
+              path: `ParikshaSnap/${uniqueFilename}`,
+              data: base64Data,
+              directory: Directory.External,
+              recursive: true,
+            });
+            setSaveBanner(`${t.savedNotice} Android/data/.../ParikshaSnap/${uniqueFilename}`);
+            return;
+          } catch {
+            const cached = await Filesystem.writeFile({
+              path: uniqueFilename,
+              data: base64Data,
+              directory: Directory.Cache,
+            });
+            await Share.share({
+              title: uniqueFilename,
+              files: [cached.uri],
+              dialogTitle: uniqueFilename,
+            });
+            setSaveBanner(`${t.savedNotice} ${uniqueFilename}`);
+            return;
+          }
         }
       } catch (err) {
+        if ((err as Error)?.name === 'AbortError') return;
         setErrorMsg(err instanceof Error ? err.message : 'Failed to save file on device');
         return;
       }
     }
 
+    const filename = getOutputFilename(false);
+    const isGenericAndroidWebView = /Android/i.test(navigator.userAgent) && /; wv\)/i.test(navigator.userAgent);
+
+    if (isGenericAndroidWebView) {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error('Failed to prepare file'));
+        reader.readAsDataURL(output.blob);
+      });
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setSaveBanner(`${t.savedNotice} ${filename}`);
+      return;
+    }
+
     const link = document.createElement('a');
     link.href = output.objectUrl;
     link.download = filename;
+    link.rel = 'noopener';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -392,7 +436,8 @@ export default function App() {
 
   const handleShare = async () => {
     if (!output) return;
-    const filename = getOutputFilename();
+    setErrorMsg(null);
+    const filename = getOutputFilename(true);
 
     if (Capacitor.isNativePlatform()) {
       try {
@@ -404,10 +449,12 @@ export default function App() {
         });
         await Share.share({
           title: filename,
-          url: cached.uri,
+          files: [cached.uri],
+          dialogTitle: filename,
         });
         return;
       } catch (err) {
+        if ((err as Error)?.name === 'AbortError') return;
         setErrorMsg(err instanceof Error ? err.message : 'Unable to share file');
         return;
       }
@@ -1125,8 +1172,8 @@ export default function App() {
                   const file = e.dataTransfer.files?.[0];
                   if (file) loadImageFile(file);
                 }}
-                className={`relative min-h-[360px] sm:min-h-[440px] p-5 sm:p-6 flex flex-col items-center justify-center transition-colors ${
-                  sourceInfo ? 'canvas-checkerboard' : 'bg-slate-50'
+                className={`relative min-h-[340px] sm:min-h-[420px] p-2 sm:p-4 flex flex-col items-center justify-center transition-colors ${
+                  sourceInfo ? 'bg-slate-100/70' : 'bg-slate-50 p-6'
                 } ${isDraggingFile ? 'ring-2 ring-inset ring-blue-600 bg-blue-50/40' : ''}`}
               >
                 {!sourceInfo ? (
@@ -1153,8 +1200,8 @@ export default function App() {
                   </div>
                 ) : previewTab === 'compare' && output ? (
                   <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-                    <div className="bg-white border border-slate-200 rounded-lg p-3 flex flex-col items-center">
-                      <div className="w-full flex items-center justify-between text-xs text-slate-500 mb-2 font-mono tabular-nums">
+                    <div className="flex flex-col items-center">
+                      <div className="w-full flex items-center justify-between text-xs text-slate-500 mb-1.5 font-mono tabular-nums">
                         <span className="font-sans font-medium text-slate-700">
                           {t.originalLabel}
                         </span>
@@ -1169,8 +1216,8 @@ export default function App() {
                       />
                     </div>
 
-                    <div className="bg-white border border-blue-200 rounded-lg p-3 flex flex-col items-center">
-                      <div className="w-full flex items-center justify-between text-xs text-blue-700 mb-2 font-mono tabular-nums">
+                    <div className="flex flex-col items-center">
+                      <div className="w-full flex items-center justify-between text-xs text-blue-700 mb-1.5 font-mono tabular-nums">
                         <span className="font-sans font-semibold">{t.outputLabel}</span>
                         <span>
                           {output.width}×{output.height} · {formatBytes(output.sizeBytes)}
@@ -1190,7 +1237,7 @@ export default function App() {
                       onPointerMove={handlePreviewPointerMove}
                       onPointerUp={handlePreviewPointerUp}
                       onPointerCancel={handlePreviewPointerUp}
-                      className={`relative max-w-full max-h-[380px] bg-white border border-slate-300 shadow-sm overflow-hidden select-none ${
+                      className={`relative max-w-full max-h-[380px] overflow-hidden select-none ${
                         previewTab === 'processed' ? 'cursor-grab active:cursor-grabbing' : ''
                       }`}
                       style={{ touchAction: 'none' }}
@@ -1471,6 +1518,17 @@ export default function App() {
       {/* Mobile Sticky Bottom Download CTA (only shown when output is ready) */}
       {sourceInfo && output && (
         <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-4 pt-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom))]">
+          {(saveBanner || errorMsg) && (
+            <div
+              className={`mb-2 px-2.5 py-1.5 rounded-md text-[11px] font-medium truncate ${
+                errorMsg
+                  ? 'bg-red-50 text-red-700 border border-red-200'
+                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+              }`}
+            >
+              {errorMsg || saveBanner}
+            </div>
+          )}
           <div className="flex items-center justify-between gap-2.5">
             <div className="min-w-0">
               <div className="text-xs font-mono tabular-nums font-semibold text-slate-900 truncate">

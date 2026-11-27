@@ -66,9 +66,9 @@ function drawTransformedImage(
   const maxOffsetX = Math.max(0, (renderW - drawAreaW) / 2);
   const maxOffsetY = Math.max(0, (renderH - drawAreaH) / 2);
   const cx =
-    drawAreaW / 2 + panX * (fitMode === 'cover' ? maxOffsetX || drawAreaW * 0.15 : drawAreaW * 0.25);
+    drawAreaW / 2 + panX * (fitMode === 'cover' ? maxOffsetX : drawAreaW * 0.25);
   const cy =
-    drawAreaH / 2 + panY * (fitMode === 'cover' ? maxOffsetY || drawAreaH * 0.15 : drawAreaH * 0.25);
+    drawAreaH / 2 + panY * (fitMode === 'cover' ? maxOffsetY : drawAreaH * 0.25);
 
   ctx.translate(cx, cy);
   ctx.rotate((rotation * Math.PI) / 180);
@@ -103,12 +103,6 @@ function drawTransformedImage(
   if (addNameDate && stripHeight > 0) {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, drawAreaH, targetW, stripHeight);
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = Math.max(1, Math.round(targetH * 0.004));
-    ctx.beginPath();
-    ctx.moveTo(0, drawAreaH);
-    ctx.lineTo(targetW, drawAreaH);
-    ctx.stroke();
 
     const nameText = (stampName || 'CANDIDATE NAME').trim().toUpperCase();
     const dateText = (stampDate || 'DOP: 26/11/2026').trim().toUpperCase();

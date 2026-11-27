@@ -89,6 +89,9 @@ jobs:
                 xml = xml.replace("</manifest>", `    ${p}\n</manifest>`);
               }
             }
+            if (!xml.includes("requestLegacyExternalStorage")) {
+              xml = xml.replace("<application", "<application android:requestLegacyExternalStorage=\"true\"");
+            }
             fs.writeFileSync(manifestPath, xml, "utf8");
           '
 
