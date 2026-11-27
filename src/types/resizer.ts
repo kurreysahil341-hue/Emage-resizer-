@@ -32,6 +32,7 @@ export interface ResizeSettings {
   height: number;
   lockAspect: boolean;
   fitMode: FitMode;
+  minKB?: number;
   maxKB: number;
   format: OutputFormat;
   rotation: number; // 0, 90, 180, 270

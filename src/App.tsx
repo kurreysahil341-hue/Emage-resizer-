@@ -310,7 +310,14 @@ export default function App() {
 
     const timer = window.setTimeout(async () => {
       try {
-        const result = await processImageWithCanvas(sourceImgEl, settings);
+        const effectiveMinKB =
+          activePreset.id !== 'custom-free' && settings.maxKB >= activePreset.minKB
+            ? activePreset.minKB
+            : 0;
+        const result = await processImageWithCanvas(sourceImgEl, {
+          ...settings,
+          minKB: effectiveMinKB,
+        });
         if (cancelled || jobId !== latestJobIdRef.current) {
           URL.revokeObjectURL(result.objectUrl);
           if (result.previewObjectUrl !== result.objectUrl) {
@@ -344,7 +351,7 @@ export default function App() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [sourceImgEl, settings]);
+  }, [sourceImgEl, settings, activePreset]);
 
   const blobToDataUrl = (blob: Blob): Promise<string> =>
     new Promise((resolve, reject) => {

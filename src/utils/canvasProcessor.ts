@@ -44,8 +44,8 @@ function drawTransformedImage(
   ctx.clip();
 
   const isQuarterTurn = rotation === 90 || rotation === 270;
-  const srcW = isQuarterTurn ? img.naturalHeight : img.naturalWidth;
-  const srcH = isQuarterTurn ? img.naturalWidth : img.naturalHeight;
+  const srcW = Math.max(1, isQuarterTurn ? img.naturalHeight : img.naturalWidth);
+  const srcH = Math.max(1, isQuarterTurn ? img.naturalWidth : img.naturalHeight);
 
   let renderW = drawAreaW;
   let renderH = drawAreaH;
@@ -241,7 +241,7 @@ async function compressCanvasToTargetBytes(
   };
 
   // Stage 1: Quality binary search at exact target dimensions
-  const stage1 = await searchQualityOnCanvas(sourceCanvas, 0.12, 1.0, 9);
+  const stage1 = await searchQualityOnCanvas(sourceCanvas, 0.05, 1.0, 9);
   if (stage1.fits) {
     return {
       blob: stage1.blob,
@@ -382,6 +382,55 @@ async function buildSingleImagePdfBlob(
   return new Blob([merged], { type: 'application/pdf' });
 }
 
+/**
+ * Pads a valid JFIF/JPEG binary to at least `targetMinBytes` using standard
+ * JPEG COM (0xFF 0xFE) comment markers inserted right after SOI (0xFF 0xD8).
+ * Pixel data and visual quality remain 100% untouched.
+ */
+async function padJpegToMinimumBytes(jpegBlob: Blob, targetMinBytes: number): Promise<Blob> {
+  if (jpegBlob.size >= targetMinBytes) return jpegBlob;
+  const raw = new Uint8Array(await jpegBlob.arrayBuffer());
+  if (raw.length < 4 || raw[0] !== 0xff || raw[1] !== 0xd8) {
+    return jpegBlob;
+  }
+
+  let remaining = targetMinBytes - raw.length;
+  const segments: Uint8Array[] = [];
+  const maxPayloadPerSeg = 65533; // 65535 - 2 length bytes
+
+  while (remaining > 0) {
+    if (remaining <= 4) {
+      // Minimum COM segment adds 4 bytes (0xFF, 0xFE, 0x00, 0x02)
+      const seg = new Uint8Array([0xff, 0xfe, 0x00, 0x02]);
+      segments.push(seg);
+      remaining = 0;
+    } else {
+      const payloadLen = Math.min(maxPayloadPerSeg, remaining - 4);
+      const markerLen = payloadLen + 2;
+      const seg = new Uint8Array(4 + payloadLen);
+      seg[0] = 0xff;
+      seg[1] = 0xfe;
+      seg[2] = (markerLen >> 8) & 0xff;
+      seg[3] = markerLen & 0xff;
+      seg.fill(0x20, 4); // ASCII spaces inside comment segment
+      segments.push(seg);
+      remaining -= seg.length;
+    }
+  }
+
+  const totalExtra = segments.reduce((sum, s) => sum + s.length, 0);
+  const out = new Uint8Array(raw.length + totalExtra);
+  out[0] = raw[0];
+  out[1] = raw[1];
+  let offset = 2;
+  for (const seg of segments) {
+    out.set(seg, offset);
+    offset += seg.length;
+  }
+  out.set(raw.subarray(2), offset);
+  return new Blob([out], { type: 'image/jpeg' });
+}
+
 export async function processImageWithCanvas(
   img: HTMLImageElement,
   settings: ResizeSettings
@@ -390,6 +439,16 @@ export async function processImageWithCanvas(
   const targetW = Math.max(16, Math.min(4000, Math.round(settings.width)));
   const targetH = Math.max(16, Math.min(4000, Math.round(settings.height)));
   const targetBytes = Math.max(1024, Math.round(settings.maxKB * 1024));
+  const minFloorBytes =
+    settings.minKB && settings.minKB > 0 && settings.maxKB >= settings.minKB
+      ? Math.round(settings.minKB * 1024)
+      : 0;
+  const minPadTargetBytes =
+    minFloorBytes > 0 && targetBytes >= minFloorBytes
+      ? targetBytes - minFloorBytes < 512
+        ? targetBytes
+        : Math.round(minFloorBytes + (targetBytes - minFloorBytes) * 0.35)
+      : 0;
 
   const canvas = document.createElement('canvas');
   canvas.width = targetW;
@@ -427,8 +486,15 @@ export async function processImageWithCanvas(
       const pdfOverheadBytes = 850;
       const jpegBudget = Math.max(1024, targetBytes - pdfOverheadBytes);
       const jpegResult = await compressCanvasToTargetBytes(canvas, 'image/jpeg', jpegBudget);
+      let embeddedJpeg = jpegResult.blob;
+      if (minFloorBytes > 0 && embeddedJpeg.size + pdfOverheadBytes < minFloorBytes) {
+        embeddedJpeg = await padJpegToMinimumBytes(
+          embeddedJpeg,
+          Math.max(1024, minPadTargetBytes - pdfOverheadBytes)
+        );
+      }
       const pdfBlob = await buildSingleImagePdfBlob(
-        jpegResult.blob,
+        embeddedJpeg,
         jpegResult.width,
         jpegResult.height
       );
@@ -436,7 +502,7 @@ export async function processImageWithCanvas(
       return {
         blob: pdfBlob,
         objectUrl: URL.createObjectURL(pdfBlob),
-        previewObjectUrl: URL.createObjectURL(jpegResult.blob),
+        previewObjectUrl: URL.createObjectURL(embeddedJpeg),
         width: jpegResult.width,
         height: jpegResult.height,
         sizeBytes: pdfBlob.size,
@@ -450,15 +516,24 @@ export async function processImageWithCanvas(
 
     // JPEG / WebP Output
     const compressed = await compressCanvasToTargetBytes(canvas, settings.format, targetBytes);
-    const url = URL.createObjectURL(compressed.blob);
+    let finalBlob = compressed.blob;
+    if (
+      settings.format === 'image/jpeg' &&
+      minFloorBytes > 0 &&
+      finalBlob.size < minFloorBytes &&
+      minPadTargetBytes >= minFloorBytes
+    ) {
+      finalBlob = await padJpegToMinimumBytes(finalBlob, minPadTargetBytes);
+    }
+    const url = URL.createObjectURL(finalBlob);
 
     return {
-      blob: compressed.blob,
+      blob: finalBlob,
       objectUrl: url,
       previewObjectUrl: url,
       width: compressed.width,
       height: compressed.height,
-      sizeBytes: compressed.blob.size,
+      sizeBytes: finalBlob.size,
       qualityUsed: compressed.qualityUsed,
       iterations: compressed.iterations,
       format: settings.format,
